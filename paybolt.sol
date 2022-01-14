@@ -33,14 +33,6 @@ interface IERC20 {
 }
 
 library SafeMath {
-
-    function add(uint256 a, uint256 b) internal pure returns (uint256) {
-        uint256 c = a + b;
-        require(c >= a, "SafeMath: addition overflow");
-
-        return c;
-    }
-
     function sub(uint256 a, uint256 b) internal pure returns (uint256) {
         return sub(a, b, "SafeMath: subtraction overflow");
     }
@@ -50,39 +42,6 @@ library SafeMath {
         uint256 c = a - b;
 
         return c;
-    }
-
-    function mul(uint256 a, uint256 b) internal pure returns (uint256) {
-        if (a == 0) {
-            return 0;
-        }
-
-        uint256 c = a * b;
-        require(c / a == b, "SafeMath: multiplication overflow");
-
-        return c;
-    }
-
-
-    function div(uint256 a, uint256 b) internal pure returns (uint256) {
-        return div(a, b, "SafeMath: division by zero");
-    }
-
-    function div(uint256 a, uint256 b, string memory errorMessage) internal pure returns (uint256) {
-        require(b > 0, errorMessage);
-        uint256 c = a / b;
-        // assert(a == b * c + a % b); // There is no case in which this doesn't hold
-
-        return c;
-    }
-
-    function mod(uint256 a, uint256 b) internal pure returns (uint256) {
-        return mod(a, b, "SafeMath: modulo by zero");
-    }
-
-    function mod(uint256 a, uint256 b, string memory errorMessage) internal pure returns (uint256) {
-        require(b != 0, errorMessage);
-        return a % b;
     }
 
     function customSubOrZero(uint256 a, uint256 b) internal pure returns (uint256) {
@@ -522,7 +481,7 @@ contract ERC20 is Context, IERC20, Ownable {
     }
 
     function increaseAllowance(address spender, uint256 addedValue) public virtual returns (bool) {
-        _approve(_msgSender(), spender, _allowances[_msgSender()][spender].add(addedValue));
+        _approve(_msgSender(), spender, _allowances[_msgSender()][spender] + addedValue);
         return true;
     }
 
@@ -543,9 +502,9 @@ contract ERC20 is Context, IERC20, Ownable {
         address sender = _msgSender();
         require(!_isExcludedFromReward[sender], "Excluded addresses cannot call this function");
         (uint256 rAmount,,,,,) = _getValues(tAmount);
-        _rOwned[sender] = _rOwned[sender].sub(rAmount);
-        _rTotal = _rTotal.sub(rAmount);
-        _tFeeTotal = _tFeeTotal.add(tAmount);
+        _rOwned[sender] = _rOwned[sender] - rAmount;
+        _rTotal = _rTotal - rAmount;
+        _tFeeTotal = _tFeeTotal + tAmount;
     }
   
     function reflectionFromToken(uint256 tAmount, bool deductTransferFee) public view returns(uint256) {
@@ -562,7 +521,7 @@ contract ERC20 is Context, IERC20, Ownable {
     function tokenFromReflection(uint256 rAmount) public view returns(uint256) {
         require(rAmount <= _rTotal, "Amount must be less than total reflections");
         uint256 currentRate =  _getRate();
-        return rAmount.div(currentRate);
+        return rAmount / currentRate;
     }
 
     function excludeFromReward(address account) public onlyOwner {
@@ -649,16 +608,16 @@ contract ERC20 is Context, IERC20, Ownable {
 
     function applyTax(uint256 contractTokenBalance) private lockTheSwap {
         // ethPortion = team + treasury + LP/2
-        uint256 halfLP = taxLPPercent.div(2);
-        uint256 totalEthPortion = taxTeamPercent.add(taxTreasuryPercent).add(halfLP);
-        uint256 toSwapIntoEth = contractTokenBalance.div(liquidityFee).mul(totalEthPortion);
+        uint256 halfLP = taxLPPercent / 2;
+        uint256 totalEthPortion = taxTeamPercent + taxTreasuryPercent + halfLP;
+        uint256 toSwapIntoEth = contractTokenBalance / liquidityFee * totalEthPortion;
 
         uint256 initialBalance = address(this).balance;
         swapTokensForEth(address(this), address(this), toSwapIntoEth);
-        uint256 transferredBalance = address(this).balance.sub(initialBalance);
+        uint256 transferredBalance = address(this).balance - initialBalance;
 
-        uint256 teamPortion = transferredBalance.div(totalEthPortion).mul(taxTeamPercent);
-        uint256 treasuryPortion = transferredBalance.div(totalEthPortion).mul(taxTreasuryPercent);
+        uint256 teamPortion = transferredBalance / totalEthPortion * taxTeamPercent;
+        uint256 treasuryPortion = transferredBalance / totalEthPortion * taxTreasuryPercent;
 
         // Send to Team address
         transferToAddressETH(teamAddress, teamPortion);
@@ -667,8 +626,8 @@ contract ERC20 is Context, IERC20, Ownable {
         transferToAddressETH(treasuryAddress, treasuryPortion);
 
         // add liquidity to uniswap
-        uint256 leftOverToken = contractTokenBalance.sub(toSwapIntoEth);
-        uint256 leftOverEth = transferredBalance.sub(teamPortion).sub(treasuryPortion);
+        uint256 leftOverToken = contractTokenBalance - toSwapIntoEth;
+        uint256 leftOverEth = transferredBalance - teamPortion - treasuryPortion;
         addLiquidity(leftOverToken, leftOverEth);
         
         emit ApplyTax(toSwapIntoEth, transferredBalance, leftOverToken);
@@ -739,16 +698,10 @@ contract ERC20 is Context, IERC20, Ownable {
         _rOwned[sender] = senderAfter;
 
         uint256 recipientBefore = _rOwned[recipient];
-        uint256 recipientAfter = _rOwned[recipient].add(rTransferAmount);
+        uint256 recipientAfter = _rOwned[recipient] + rTransferAmount;
         _rOwned[recipient] = recipientAfter;
 
-        if (recipientBefore == 0 && recipientAfter > 0) {
-            _holders = _holders.add(1);
-        }
-
-        if (senderBefore > 0 && senderAfter == 0) {
-            _holders = _holders.customSubOrZero(1);
-        }
+        _updateHolderCount(senderBefore, senderAfter, recipientBefore, recipientAfter);
 
         _takeLiquidity(tLiquidity);
         _reflectFee(rFee, tFee);
@@ -763,17 +716,11 @@ contract ERC20 is Context, IERC20, Ownable {
         _rOwned[sender] = senderAfter;
 
         uint256 recipientBefore = _tOwned[recipient];
-        uint256 recipientAfter = _tOwned[recipient].add(tTransferAmount);
+        uint256 recipientAfter = _tOwned[recipient] + tTransferAmount;
         _tOwned[recipient] = recipientAfter;
-        _rOwned[recipient] = _rOwned[recipient].add(rTransferAmount); 
+        _rOwned[recipient] = _rOwned[recipient] + rTransferAmount; 
         
-        if (recipientBefore == 0 && recipientAfter > 0) {
-            _holders = _holders.add(1);
-        }
-
-        if (senderBefore > 0 && senderAfter == 0) {
-            _holders = _holders.customSubOrZero(1);
-        }
+        _updateHolderCount(senderBefore, senderAfter, recipientBefore, recipientAfter);
      
         _takeLiquidity(tLiquidity);
         _reflectFee(rFee, tFee);
@@ -789,16 +736,10 @@ contract ERC20 is Context, IERC20, Ownable {
         _rOwned[sender] = _rOwned[sender].customSubOrZero(rAmount);
 
         uint256 recipientBefore = _rOwned[recipient];
-        uint256 recipientAfter = _rOwned[recipient].add(rTransferAmount);
+        uint256 recipientAfter = _rOwned[recipient] + rTransferAmount;
         _rOwned[recipient] = recipientAfter;
 
-        if (recipientBefore == 0 && recipientAfter > 0) {
-            _holders = _holders.add(1);
-        }
-
-        if (senderBefore > 0 && senderAfter == 0) {
-            _holders = _holders.customSubOrZero(1);
-        }
+        _updateHolderCount(senderBefore, senderAfter, recipientBefore, recipientAfter);
 
         _takeLiquidity(tLiquidity);
         _reflectFee(rFee, tFee);
@@ -814,17 +755,11 @@ contract ERC20 is Context, IERC20, Ownable {
         _rOwned[sender] = _rOwned[sender].customSubOrZero(rAmount);
 
         uint256 recipientBefore = _tOwned[recipient];
-        uint256 recipientAfter = _tOwned[recipient].add(tTransferAmount);
+        uint256 recipientAfter = _tOwned[recipient] + tTransferAmount;
         _tOwned[recipient] = recipientAfter;
-        _rOwned[recipient] = _rOwned[recipient].add(rTransferAmount); 
+        _rOwned[recipient] = _rOwned[recipient] + rTransferAmount; 
 
-        if (recipientBefore == 0 && recipientAfter > 0) {
-            _holders = _holders.add(1);
-        }
-
-        if (senderBefore > 0 && senderAfter == 0) {
-            _holders = _holders.customSubOrZero(1);
-        }
+        _updateHolderCount(senderBefore, senderAfter, recipientBefore, recipientAfter);
      
         _takeLiquidity(tLiquidity);
         _reflectFee(rFee, tFee);
@@ -832,8 +767,8 @@ contract ERC20 is Context, IERC20, Ownable {
     }
 
     function _reflectFee(uint256 rFee, uint256 tFee) private {
-        _rTotal = _rTotal.sub(rFee);
-        _tFeeTotal = _tFeeTotal.add(tFee);
+        _rTotal = _rTotal - rFee;
+        _tFeeTotal = _tFeeTotal + tFee;
     }
 
     function _getValues(uint256 tAmount) private view returns (uint256, uint256, uint256, uint256, uint256, uint256) {
@@ -845,21 +780,21 @@ contract ERC20 is Context, IERC20, Ownable {
     function _getTValues(uint256 tAmount) private view returns (uint256, uint256, uint256) {
         uint256 tFee = calculateTaxFee(tAmount);
         uint256 tLiquidity = calculateLiquidityFee(tAmount);
-        uint256 tTransferAmount = tAmount.sub(tFee).sub(tLiquidity);
+        uint256 tTransferAmount = tAmount - tFee - tLiquidity;
         return (tTransferAmount, tFee, tLiquidity);
     }
 
     function _getRValues(uint256 tAmount, uint256 tFee, uint256 tLiquidity, uint256 currentRate) private pure returns (uint256, uint256, uint256) {
-        uint256 rAmount = tAmount.mul(currentRate);
-        uint256 rFee = tFee.mul(currentRate);
-        uint256 rLiquidity = tLiquidity.mul(currentRate);
-        uint256 rTransferAmount = rAmount.sub(rFee).sub(rLiquidity);
+        uint256 rAmount = tAmount * currentRate;
+        uint256 rFee = tFee * currentRate;
+        uint256 rLiquidity = tLiquidity * currentRate;
+        uint256 rTransferAmount = rAmount - rFee - rLiquidity;
         return (rAmount, rTransferAmount, rFee);
     }
 
     function _getRate() private view returns(uint256) {
         (uint256 rSupply, uint256 tSupply) = _getCurrentSupply();
-        return rSupply.div(tSupply);
+        return rSupply / tSupply;
     }
 
     function _getCurrentSupply() private view returns(uint256, uint256) {
@@ -867,27 +802,37 @@ contract ERC20 is Context, IERC20, Ownable {
         uint256 tSupply = _tTotal;      
         for (uint256 i = 0; i < _excludedFromReward.length; i++) {
             if (_rOwned[_excludedFromReward[i]] > rSupply || _tOwned[_excludedFromReward[i]] > tSupply) return (_rTotal, _tTotal);
-            rSupply = rSupply.sub(_rOwned[_excludedFromReward[i]]);
-            tSupply = tSupply.sub(_tOwned[_excludedFromReward[i]]);
+            rSupply = rSupply - _rOwned[_excludedFromReward[i]];
+            tSupply = tSupply - _tOwned[_excludedFromReward[i]];
         }
-        if (rSupply < _rTotal.div(_tTotal)) return (_rTotal, _tTotal);
+        if (rSupply < _rTotal / _tTotal) return (_rTotal, _tTotal);
         return (rSupply, tSupply);
     }
     
     function _takeLiquidity(uint256 tLiquidity) private {
         uint256 currentRate =  _getRate();
-        uint256 rLiquidity = tLiquidity.mul(currentRate);
-        _rOwned[address(this)] = _rOwned[address(this)].add(rLiquidity);
+        uint256 rLiquidity = tLiquidity * currentRate;
+        _rOwned[address(this)] = _rOwned[address(this)] + rLiquidity;
         if(_isExcludedFromReward[address(this)])
-            _tOwned[address(this)] = _tOwned[address(this)].add(tLiquidity);
+            _tOwned[address(this)] = _tOwned[address(this)] + tLiquidity;
     }
     
+    function _updateHolderCount(uint256 senderBefore, uint256 senderAfter, uint256 recipientBefore, uint256 recipientAfter) private {
+        if (recipientBefore == 0 && recipientAfter > 0) {
+            _holders = _holders + 1;
+        }
+
+        if (senderBefore > 0 && senderAfter == 0) {
+            _holders = _holders.customSubOrZero(1);
+        }
+    }
+
     function calculateTaxFee(uint256 _amount) private view returns (uint256) {
-        return _amount.mul(taxFee).div(10000);
+        return _amount * taxFee / 10000;
     }
     
     function calculateLiquidityFee(uint256 _amount) private view returns (uint256) {
-        return _amount.mul(liquidityFee).div(10000);
+        return _amount * liquidityFee / 10000;
     }
 
     function removeAllFee() private {
@@ -1181,8 +1126,8 @@ contract ERC1363 is ERC20, IERC1363, ERC165 {
         require(isWhitelistedMerchant[to], "Merchant is not whitelisted");  
 
         // in percentage, 100% = 10000; 1% = 100; 0.1% = 10
-        uint256 txPaymentFee = value.div(10000).mul(paymentFee);
-        uint256 valueAfterFee = value.sub(txPaymentFee);
+        uint256 txPaymentFee = value / 10000 * paymentFee;
+        uint256 valueAfterFee = value - txPaymentFee;
 
         transfer(to, valueAfterFee);
         require(_checkAndCallTransfer(_msgSender(), to, valueAfterFee, data), "ERC1363: _checkAndCallTransfer reverts");
@@ -1207,8 +1152,8 @@ contract ERC1363 is ERC20, IERC1363, ERC165 {
         require(isWhitelistedMerchant[to], "Merchant is not whitelisted");
 
         // in percentage, 100% = 10000; 1% = 100; 0.1% = 10
-        uint256 txPaymentFee = value.div(10000).mul(paymentFee);
-        uint256 valueAfterFee = value.sub(txPaymentFee);
+        uint256 txPaymentFee = value / 10000 * paymentFee;
+        uint256 valueAfterFee = value - txPaymentFee;
 
         transferFrom(from, to, valueAfterFee);
         require(_checkAndCallTransfer(from, to, valueAfterFee, data), "ERC1363: _checkAndCallTransfer reverts");
@@ -1261,10 +1206,10 @@ contract ERC1363 is ERC20, IERC1363, ERC165 {
             minValue,
             path,
             msg.sender,
-            block.timestamp.add(120)
+            block.timestamp + 120
             );
 
-        uint256 amountReceived = balanceOf(msg.sender).sub(initialBalance);
+        uint256 amountReceived = balanceOf(msg.sender) - initialBalance;
 
         emit TransferOtherTokenAndCall(tokenIn, to, amountReceived, minValue, data);
 
