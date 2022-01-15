@@ -366,14 +366,14 @@ contract ERC20 is Context, IERC20, Ownable {
     mapping (address => bool) private _isExcludedFromReward;
     address[] private _excludedFromReward;
    
-    uint256 private constant _MAX = ~uint256(0);
-    uint256 private _tTotal = 10 * 10**9 * 10**9;
-    uint256 private _rTotal = (_MAX - (_MAX % _tTotal));
-    uint256 private _tFeeTotal;
-
     string private _name;
     string private _symbol;
-    uint8 private _decimals = 9;
+    uint8 private _decimals = 18;
+
+    uint256 private constant _MAX = ~uint256(0);
+    uint256 private _tTotal = 10 * 10**9 * 10**_decimals;
+    uint256 private _rTotal = (_MAX - (_MAX % _tTotal));
+    uint256 private _tFeeTotal;
 
     // payment fee in percentage, 100% = 10000; 1% = 100; 0.1% = 10
     uint256 public paymentFee = 0; 
@@ -389,8 +389,8 @@ contract ERC20 is Context, IERC20, Ownable {
     uint256 public liquidityFee = 700;   // Team + Treasury + LP
     uint256 private _previousLiquidityFee = liquidityFee;
     
-    uint256 public maxTxAmount = 100 * 10**6 * 10**9;
-    uint256 private minimumTokensBeforeSwap = 2 * 10**6 * 10**9; 
+    uint256 public maxTxAmount = 100 * 10**6 * 10**_decimals;
+    uint256 private minimumTokensBeforeSwap = 2 * 10**6 * 10**_decimals; 
 
     uint256 private _holders = 0;
 
