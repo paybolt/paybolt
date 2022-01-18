@@ -21,6 +21,31 @@ abstract contract Context {
     }
 }
 
+abstract contract ReentrancyGuard {
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+
+    uint256 private _status;
+
+    constructor() {
+        _status = _NOT_ENTERED;
+    }
+
+    modifier nonReentrant() {
+        // On the first call to nonReentrant, _notEntered will be true
+        require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
+
+        // Any calls to nonReentrant after this point will fail
+        _status = _ENTERED;
+
+        _;
+
+        // By storing the original value once again, a refund is triggered (see
+        // https://eips.ethereum.org/EIPS/eip-2200)
+        _status = _NOT_ENTERED;
+    }
+}
+
 interface IERC20 {
     function totalSupply() external view returns (uint256);
     function balanceOf(address account) external view returns (uint256);
@@ -390,9 +415,9 @@ contract ERC20 is Context, IERC20, Ownable {
     uint256 private _previousLiquidityFee = liquidityFee;
     
     uint256 public maxTxAmount = 100 * 10**6 * 10**_decimals;
-    uint256 private minimumTokensBeforeSwap = 2 * 10**6 * 10**_decimals; 
+    uint256 public minimumTokensBeforeSwap = 2 * 10**6 * 10**_decimals; 
 
-    uint256 private _holders = 0;
+    uint256 public holders = 0;
 
     IUniswapV2Router02 public uniswapV2Router;
     address public uniswapV2Pair;
@@ -408,8 +433,30 @@ contract ERC20 is Context, IERC20, Ownable {
         uint256 ethReceived,
         uint256 tokensIntoLiqudity
     );
-    
     event SwapTokensForETH(uint256 amountIn, address[] path);
+    event AddLiquidity(uint256 tokenAmount, uint256 ethAmount);
+    event ExcludeFromReward(address account);
+    event IncludeInReward(address account);
+    event ExcludeFromFee(address account);
+    event IncludeInFee(address account);
+    event ExcludeOriginFromFee(address account);
+    event IncludeOriginInFee(address account);
+    event ExcludeDestinationFromFee(address account);
+    event IncludeDestinationInFee(address account);
+    event BlackList(address account);
+    event RemoveFromBlacklist(address account);
+    event WhitelistMerchant(address account);
+    event RemoveFromWhitelistMerchant(address account);
+    event SetTaxFeePercent(uint256 taxFee);
+    event SetPaymentFeePercent(uint256 percent);
+    event SetMaxTxAmount(uint256 maxTxAmount);
+    event SetLiquidityFeePercent(uint256 _iquidityFee);
+    event SetTaxTeamPercent(uint256 percent);
+    event SetTaxTreasuryPercent(uint256 percent);
+    event SetTaxLPPercent(uint256 percent);
+    event SetNumTokensSellToAddToLiquidity(uint256 minimumTokensBeforeSwap);
+    event SetTeamAddress(address teamAddress);
+    event SetTreasuryAddress(address treasuryAddress);
     
     modifier lockTheSwap {
         inSwapAndLiquify = true;
@@ -434,7 +481,7 @@ contract ERC20 is Context, IERC20, Ownable {
         _isExcludedFromFee[teamAddress] = true;
         _isExcludedFromFee[treasuryAddress] = true;
 
-        _holders = 1;
+        holders = 1;
         
         emit Transfer(address(0), _msgSender(), _tTotal);
     }
@@ -490,23 +537,10 @@ contract ERC20 is Context, IERC20, Ownable {
         return true;
     }
 
-    function isExcludedFromReward(address account) public view returns (bool) {
-        return _isExcludedFromReward[account];
-    }
-
     function totalFees() public view returns (uint256) {
         return _tFeeTotal;
     }
     
-    function deliver(uint256 tAmount) public {
-        address sender = _msgSender();
-        require(!_isExcludedFromReward[sender], "Excluded addresses cannot call this function");
-        (uint256 rAmount,,,,,) = _getValues(tAmount);
-        _rOwned[sender] = _rOwned[sender] - rAmount;
-        _rTotal = _rTotal - rAmount;
-        _tFeeTotal = _tFeeTotal + tAmount;
-    }
-  
     function reflectionFromToken(uint256 tAmount, bool deductTransferFee) public view returns(uint256) {
         require(tAmount <= _tTotal, "Amount must be less than supply");
         if (!deductTransferFee) {
@@ -522,45 +556,6 @@ contract ERC20 is Context, IERC20, Ownable {
         require(rAmount <= _rTotal, "Amount must be less than total reflections");
         uint256 currentRate =  _getRate();
         return rAmount / currentRate;
-    }
-
-    function excludeFromReward(address account) public onlyOwner {
-        require(!_isExcludedFromReward[account], "Account is already excluded");
-        if(_rOwned[account] > 0) {
-            _tOwned[account] = tokenFromReflection(_rOwned[account]);
-        }
-        _isExcludedFromReward[account] = true;
-        _excludedFromReward.push(account);
-    }
-
-    function includeInReward(address account) external onlyOwner {
-        require(_isExcludedFromReward[account], "Account is already excluded");
-        for (uint256 i = 0; i < _excludedFromReward.length; i++) {
-            if (_excludedFromReward[i] == account) {
-                _excludedFromReward[i] = _excludedFromReward[_excludedFromReward.length - 1];
-                _tOwned[account] = 0;
-                _isExcludedFromReward[account] = false;
-                _excludedFromReward.pop();
-                break;
-            }
-        }
-    }
-
-    function setRouterAddress(address routerAddress) external onlyOwner {
-        require(
-            routerAddress != address(0),
-            "routerAddress should not be the zero address"
-        );
-
-        address prevAddress = address(uniswapV2Router);
-        IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(routerAddress); 
-        uniswapV2Pair = IUniswapV2Factory(_uniswapV2Router.factory()).getPair(
-            address(this),
-            _uniswapV2Router.WETH()
-        );
-
-        uniswapV2Router = _uniswapV2Router;
-        emit RouterAddressUpdated(prevAddress, routerAddress);
     }
 
     function _approve(address owner, address spender, uint256 amount) private {
@@ -670,6 +665,8 @@ contract ERC20 is Context, IERC20, Ownable {
             owner(),
             block.timestamp
         );
+
+        emit AddLiquidity(tokenAmount, ethAmount);
     }
 
     function _tokenTransfer(address sender, address recipient, uint256 amount, bool takeFee) private {
@@ -819,11 +816,11 @@ contract ERC20 is Context, IERC20, Ownable {
     
     function _updateHolderCount(uint256 senderBefore, uint256 senderAfter, uint256 recipientBefore, uint256 recipientAfter) private {
         if (recipientBefore == 0 && recipientAfter > 0) {
-            _holders = _holders + 1;
+            holders = holders + 1;
         }
 
         if (senderBefore > 0 && senderAfter == 0) {
-            _holders = _holders.customSubOrZero(1);
+            holders = holders.customSubOrZero(1);
         }
     }
 
@@ -850,16 +847,66 @@ contract ERC20 is Context, IERC20, Ownable {
         liquidityFee = _previousLiquidityFee;
     }
 
+    function isExcludedFromReward(address account) public view returns (bool) {
+        return _isExcludedFromReward[account];
+    }
+
+    function excludeFromReward(address account) public onlyOwner {
+        require(!_isExcludedFromReward[account], "Account is already excluded");
+        if(_rOwned[account] > 0) {
+            _tOwned[account] = tokenFromReflection(_rOwned[account]);
+        }
+        _isExcludedFromReward[account] = true;
+        _excludedFromReward.push(account);
+
+        emit ExcludeFromReward(account);
+    }
+
+    function includeInReward(address account) external onlyOwner {
+        require(_isExcludedFromReward[account], "Account is already included");
+        for (uint256 i = 0; i < _excludedFromReward.length; i++) {
+            if (_excludedFromReward[i] == account) {
+                _excludedFromReward[i] = _excludedFromReward[_excludedFromReward.length - 1];
+                _tOwned[account] = 0;
+                _isExcludedFromReward[account] = false;
+                _excludedFromReward.pop();
+                break;
+            }
+        }
+        emit IncludeInReward(account);
+    }
+
+    function setRouterAddress(address routerAddress) external onlyOwner {
+        require(
+            routerAddress != address(0),
+            "routerAddress should not be the zero address"
+        );
+
+        address prevAddress = address(uniswapV2Router);
+        IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(routerAddress); 
+        uniswapV2Pair = IUniswapV2Factory(_uniswapV2Router.factory()).getPair(
+            address(this),
+            _uniswapV2Router.WETH()
+        );
+
+        uniswapV2Router = _uniswapV2Router;
+        emit RouterAddressUpdated(prevAddress, routerAddress);
+    }
+
     function isExcludedFromFee(address account) public view returns(bool) {
         return _isExcludedFromFee[account];
     }
     
     function excludeFromFee(address account) public onlyOwner {
+        require(!_isExcludedFromFee[account], "Account is already excluded");
         _isExcludedFromFee[account] = true;
+        emit ExcludeFromFee(account);
     }
     
     function includeInFee(address account) public onlyOwner {
+        require(_isExcludedFromFee[account], "Account is already included");
         _isExcludedFromFee[account] = false;
+        emit IncludeInFee(account);
     }
     
     function isOriginExcludedFromFee(address account) public view returns(bool) {
@@ -867,11 +914,15 @@ contract ERC20 is Context, IERC20, Ownable {
     }
     
     function excludeOriginFromFee(address account) public onlyOwner {
+        require(!_isOriginExcludedFromFee[account], "Account is already excluded");
         _isOriginExcludedFromFee[account] = true;
+        emit ExcludeOriginFromFee(account);
     }
     
     function includeOriginInFee(address account) public onlyOwner {
+        require(_isOriginExcludedFromFee[account], "Account is already included");
         _isOriginExcludedFromFee[account] = false;
+        emit IncludeOriginInFee(account);
     }
     
     function isDestinationExcludedFromFee(address account) public view returns(bool) {
@@ -879,11 +930,15 @@ contract ERC20 is Context, IERC20, Ownable {
     }
     
     function excludeDestinationFromFee(address account) public onlyOwner {
+        require(!_isDestinationExcludedFromFee[account], "Account is already excluded");
         _isDestinationExcludedFromFee[account] = true;
+        emit ExcludeDestinationFromFee(account);
     }
     
     function includeDestinationInFee(address account) public onlyOwner {
+        require(_isDestinationExcludedFromFee[account], "Account is already included");
         _isDestinationExcludedFromFee[account] = false;
+        emit IncludeDestinationInFee(account);
     }
 
     function isAddressBlacklisted(address account) public view returns(bool) {
@@ -893,11 +948,13 @@ contract ERC20 is Context, IERC20, Ownable {
     function blackList(address account) public onlyOwner {
         require(!isBlacklisted[account], "User already blacklisted");
         isBlacklisted[account] = true;
+        emit BlackList(account);
     }
     
     function removeFromBlacklist(address account) public onlyOwner {
         require(isBlacklisted[account], "User is not blacklisted");
         isBlacklisted[account] = false;
+        emit RemoveFromBlacklist(account);
     }
     
     function isAddressWhitelistedMerchant(address account) public view returns(bool) {
@@ -905,55 +962,65 @@ contract ERC20 is Context, IERC20, Ownable {
     }
     
     function whitelistMerchant(address account) public onlyOwner {
+        require(!isWhitelistedMerchant[account], "Account is already whitelisted");
         isWhitelistedMerchant[account] = true;
+        emit WhitelistMerchant(account);
     }
     
     function removeFromWhitelistMerchant(address account) public onlyOwner {
+        require(isWhitelistedMerchant[account], "Account is not whitelisted");
         isWhitelistedMerchant[account] = false;
+        emit RemoveFromWhitelistMerchant(account);
     }
     
     function setTaxFeePercent(uint256 _taxFee) external onlyOwner {
         taxFee = _taxFee;
+        emit SetTaxFeePercent(_taxFee);
     }
     
     function setPaymentFeePercent(uint256 percent) external onlyOwner {
         paymentFee = percent;
+        emit SetPaymentFeePercent(percent);
     }
     
     function setMaxTxAmount(uint256 _maxTxAmount) external onlyOwner {
         maxTxAmount = _maxTxAmount;
+        emit SetMaxTxAmount(_maxTxAmount);
     }
     
     function setLiquidityFeePercent(uint256 _liquidityFee) external onlyOwner {
         liquidityFee = _liquidityFee;
+        emit SetLiquidityFeePercent(_liquidityFee);
     }
     
     function setTaxTeamPercent(uint256 _percent) external onlyOwner {
         taxTeamPercent = _percent;
+        emit SetTaxTeamPercent(_percent);
     }
     
     function setTaxTreasuryPercent(uint256 _percent) external onlyOwner {
         taxTreasuryPercent = _percent;
+        emit SetTaxTreasuryPercent(_percent);
     }
     
     function setTaxLPPercent(uint256 _percent) external onlyOwner {
         taxLPPercent = _percent;
-    }
-    
-    function minimumTokensBeforeSwapAmount() public view returns (uint256) {
-        return minimumTokensBeforeSwap;
+        emit SetTaxLPPercent(_percent);
     }
     
     function setNumTokensSellToAddToLiquidity(uint256 _minimumTokensBeforeSwap) external onlyOwner() {
         minimumTokensBeforeSwap = _minimumTokensBeforeSwap;
+        emit SetNumTokensSellToAddToLiquidity(_minimumTokensBeforeSwap);
     }
     
     function setTeamAddress(address _teamAddress) external onlyOwner {
         teamAddress = payable(_teamAddress);
+        emit SetTeamAddress(_teamAddress);
     }
 
     function setTreasuryAddress(address _treasuryAddress) external onlyOwner {
         treasuryAddress = payable(_treasuryAddress);
+        emit SetTreasuryAddress(_treasuryAddress);
     }
 
     function setSwapAndLiquifyEnabled(bool _enabled) public onlyOwner {
@@ -965,22 +1032,22 @@ contract ERC20 is Context, IERC20, Ownable {
         recipient.transfer(amount);
     }
     
-    function holders() external view returns (uint256) {
-        return _holders;
-    }
-
     function quote(uint256 amountA, uint256 reserveA, uint256 reserveB) public view returns (uint256 amountB) {
         return uniswapV2Router.quote(amountA, reserveA, reserveB);
     }
+
     function getAmountOut(uint256 amountIn, uint256 reserveIn, uint256 reserveOut) public view returns (uint256 amountOut) {
         return uniswapV2Router.getAmountOut(amountIn, reserveIn, reserveOut);
     }
+
     function getAmountIn(uint256 amountOut, uint256 reserveIn, uint256 reserveOut) public view returns (uint256 amountIn) {
         return uniswapV2Router.getAmountIn(amountOut, reserveIn, reserveOut);
     }
+
     function getAmountsOut(uint256 amountIn, address[] calldata path) public view returns (uint256[] memory amounts) {
         return uniswapV2Router.getAmountsOut(amountIn, path);
     }
+
     function getAmountsIn(uint256 amountOut, address[] calldata path) public view returns (uint256[] memory amounts) {
         return uniswapV2Router.getAmountsIn(amountOut, path);
     }
@@ -1091,7 +1158,7 @@ contract ERC165 is IERC165 {
     }
 }
 
-contract ERC1363 is ERC20, IERC1363, ERC165 {
+contract ERC1363 is ReentrancyGuard, ERC20, IERC1363, ERC165 {
     using SafeMath for uint256;
 
     event TransferAndCall(address to, uint256 value, bytes data);
@@ -1216,7 +1283,7 @@ contract ERC1363 is ERC20, IERC1363, ERC165 {
         return transferAndCall(to, amountReceived, data);
     }
 
-    function _checkAndCallTransfer(address from, address to, uint256 value, bytes memory data) internal returns (bool) {
+    function _checkAndCallTransfer(address from, address to, uint256 value, bytes memory data) internal nonReentrant returns (bool) {
         if (!to.isContract()) {
             return false;
         }
@@ -1226,7 +1293,7 @@ contract ERC1363 is ERC20, IERC1363, ERC165 {
         return (retval == _ERC1363_RECEIVED);
     }
 
-    function _checkAndCallApprove(address spender, uint256 value, bytes memory data) internal returns (bool) {
+    function _checkAndCallApprove(address spender, uint256 value, bytes memory data) internal nonReentrant returns (bool) {
         if (!spender.isContract()) {
             return false;
         }
