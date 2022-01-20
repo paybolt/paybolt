@@ -68,16 +68,6 @@ library SafeMath {
 
         return c;
     }
-
-    function customSubOrZero(uint256 a, uint256 b) internal pure returns (uint256) {
-        uint256 c = 0; 
-
-        if (b <= a) {
-            c = a - b;
-        }
-
-        return c;
-    }
 }
 
 library Address {
@@ -376,8 +366,8 @@ contract ERC20 is Context, IERC20, Ownable {
     using SafeMath for uint256;
     using Address for address;
     
-    address payable public teamAddress = payable(0x65DB2b9C8B2a21957c4806fDda4043BFF7C466f4); // Team Address
-    address payable public treasuryAddress = payable(0xdc7dc71F7DDDB1d5b4CCdb0682E096793B323012); // Treasury Address
+    address payable public teamAddress = payable(0x7Ccb537E8A041977A9B32Cda7Ff987ea0920FdAF); // Team Address
+    address payable public treasuryAddress = payable(0x307942ea000c44F32a7f97a8b4f8ab12F1Bc98e6); // Treasury Address
     mapping (address => uint256) private _rOwned;
     mapping (address => uint256) private _tOwned;
     mapping (address => mapping (address => uint256)) private _allowances;
@@ -691,7 +681,7 @@ contract ERC20 is Context, IERC20, Ownable {
         (uint256 rAmount, uint256 rTransferAmount, uint256 rFee, uint256 tTransferAmount, uint256 tFee, uint256 tLiquidity) = _getValues(tAmount);
 
         uint256 senderBefore = _rOwned[sender];
-        uint256 senderAfter = _rOwned[sender].customSubOrZero(rAmount);
+        uint256 senderAfter = _rOwned[sender] - rAmount;
         _rOwned[sender] = senderAfter;
 
         uint256 recipientBefore = _rOwned[recipient];
@@ -709,7 +699,7 @@ contract ERC20 is Context, IERC20, Ownable {
         (uint256 rAmount, uint256 rTransferAmount, uint256 rFee, uint256 tTransferAmount, uint256 tFee, uint256 tLiquidity) = _getValues(tAmount);
         
         uint256 senderBefore = _rOwned[sender];
-        uint256 senderAfter = _rOwned[sender].customSubOrZero(rAmount);
+        uint256 senderAfter = _rOwned[sender] - rAmount;
         _rOwned[sender] = senderAfter;
 
         uint256 recipientBefore = _tOwned[recipient];
@@ -728,9 +718,9 @@ contract ERC20 is Context, IERC20, Ownable {
         (uint256 rAmount, uint256 rTransferAmount, uint256 rFee, uint256 tTransferAmount, uint256 tFee, uint256 tLiquidity) = _getValues(tAmount);
         
         uint256 senderBefore = _tOwned[sender];
-        uint256 senderAfter = _tOwned[sender].customSubOrZero(tAmount);
+        uint256 senderAfter = _tOwned[sender] - tAmount;
         _tOwned[sender] = senderAfter;
-        _rOwned[sender] = _rOwned[sender].customSubOrZero(rAmount);
+        _rOwned[sender] = _rOwned[sender] - rAmount;
 
         uint256 recipientBefore = _rOwned[recipient];
         uint256 recipientAfter = _rOwned[recipient] + rTransferAmount;
@@ -747,9 +737,9 @@ contract ERC20 is Context, IERC20, Ownable {
         (uint256 rAmount, uint256 rTransferAmount, uint256 rFee, uint256 tTransferAmount, uint256 tFee, uint256 tLiquidity) = _getValues(tAmount);
         
         uint256 senderBefore = _tOwned[sender];
-        uint256 senderAfter = _tOwned[sender].customSubOrZero(tAmount);
+        uint256 senderAfter = _tOwned[sender] - tAmount;
         _tOwned[sender] = senderAfter;
-        _rOwned[sender] = _rOwned[sender].customSubOrZero(rAmount);
+        _rOwned[sender] = _rOwned[sender] - rAmount;
 
         uint256 recipientBefore = _tOwned[recipient];
         uint256 recipientAfter = _tOwned[recipient] + tTransferAmount;
@@ -820,7 +810,7 @@ contract ERC20 is Context, IERC20, Ownable {
         }
 
         if (senderBefore > 0 && senderAfter == 0) {
-            holders = holders.customSubOrZero(1);
+            holders = holders - 1;
         }
     }
 
@@ -974,36 +964,43 @@ contract ERC20 is Context, IERC20, Ownable {
     }
     
     function setTaxFeePercent(uint256 _taxFee) external onlyOwner {
+        require(_taxFee <= 1000, "Input must be below or equal to 10% (1000 = 10%; 10000 = 100%)");
         taxFee = _taxFee;
         emit SetTaxFeePercent(_taxFee);
     }
     
-    function setPaymentFeePercent(uint256 percent) external onlyOwner {
-        paymentFee = percent;
-        emit SetPaymentFeePercent(percent);
+    function setPaymentFeePercent(uint256 _percent) external onlyOwner {
+        require(_percent <= 1000, "Input must be below or equal to 10% (1000 = 10%; 10000 = 100%)");
+        paymentFee = _percent;
+        emit SetPaymentFeePercent(_percent);
     }
     
     function setMaxTxAmount(uint256 _maxTxAmount) external onlyOwner {
+        require(_maxTxAmount > 0, "Input must be greater than zero");
         maxTxAmount = _maxTxAmount;
         emit SetMaxTxAmount(_maxTxAmount);
     }
     
     function setLiquidityFeePercent(uint256 _liquidityFee) external onlyOwner {
+        require(_liquidityFee <= 1000, "Input must be below or equal to 10% (1000 = 10%; 10000 = 100%)");
         liquidityFee = _liquidityFee;
         emit SetLiquidityFeePercent(_liquidityFee);
     }
     
     function setTaxTeamPercent(uint256 _percent) external onlyOwner {
+        require(_percent <= 1000, "Input must be below or equal to 10% (1000 = 10%; 10000 = 100%)");
         taxTeamPercent = _percent;
         emit SetTaxTeamPercent(_percent);
     }
     
     function setTaxTreasuryPercent(uint256 _percent) external onlyOwner {
+        require(_percent <= 1000, "Input must be below or equal to 10% (1000 = 10%; 10000 = 100%)");
         taxTreasuryPercent = _percent;
         emit SetTaxTreasuryPercent(_percent);
     }
     
     function setTaxLPPercent(uint256 _percent) external onlyOwner {
+        require(_percent <= 1000, "Input must be below or equal to 10% (1000 = 10%; 10000 = 100%)");
         taxLPPercent = _percent;
         emit SetTaxLPPercent(_percent);
     }
@@ -1014,11 +1011,13 @@ contract ERC20 is Context, IERC20, Ownable {
     }
     
     function setTeamAddress(address _teamAddress) external onlyOwner {
+        require(_teamAddress != address(0), "Address should not be the zero address");
         teamAddress = payable(_teamAddress);
         emit SetTeamAddress(_teamAddress);
     }
 
     function setTreasuryAddress(address _treasuryAddress) external onlyOwner {
+        require(_treasuryAddress != address(0), "Address should not be the zero address");
         treasuryAddress = payable(_treasuryAddress);
         emit SetTreasuryAddress(_treasuryAddress);
     }
