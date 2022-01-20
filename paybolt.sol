@@ -1160,10 +1160,10 @@ contract ERC165 is IERC165 {
 contract ERC1363 is ReentrancyGuard, ERC20, IERC1363, ERC165 {
     using SafeMath for uint256;
 
-    event TransferAndCall(address to, uint256 value, bytes data);
-    event TransferFromAndCall(address from, address to, uint256 value, bytes data);
+    event TransferAndCall(address to, uint256 value, uint256 valueAfterFee, bytes data);
+    event TransferFromAndCall(address from, address to, uint256 value, uint256 valueAfterFee, bytes data);
     event ApproveAndCall(address spender, uint256 value, bytes data);
-    event TransferOtherTokenAndCall(address tokenIn, address to, uint256 value, uint256 minValue, bytes data);
+    event TransferOtherTokenAndCall(address tokenIn, address to, uint256 value, uint256 valueAfterFee, uint256 minValue, bytes data);
 
     using Address for address;
 
@@ -1202,7 +1202,7 @@ contract ERC1363 is ReentrancyGuard, ERC20, IERC1363, ERC165 {
             transfer(teamAddress, txPaymentFee);
         }
 
-        emit TransferAndCall(to, valueAfterFee, data);
+        emit TransferAndCall(to, value, valueAfterFee, data);
         return true;
     }
 
@@ -1228,7 +1228,7 @@ contract ERC1363 is ReentrancyGuard, ERC20, IERC1363, ERC165 {
             transfer(teamAddress, txPaymentFee);
         }
 
-        emit TransferFromAndCall(from, to, valueAfterFee, data);
+        emit TransferFromAndCall(from, to, value, valueAfterFee, data);
         return true;
     }
 
@@ -1264,22 +1264,42 @@ contract ERC1363 is ReentrancyGuard, ERC20, IERC1363, ERC165 {
         path[0] = tokenIn;
         path[1] = uniswapV2Router.WETH(); //WETH
         path[2] = address(this);
+        
+        // if taking payment fee, swaps resulted amount to sender and distribute from sender address accordingly;
+        // if not taking payment fee, swaps resulted amount to merchant address directly
+        address targetAddress = to;
+        if (paymentFee > 0) {
+            targetAddress = msg.sender;
+        }
 
-        uint256 initialBalance = balanceOf(msg.sender);
+        uint256 initialBalance = balanceOf(targetAddress);
         
         uniswapV2Router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
             value,
             minValue,
             path,
-            msg.sender,
+            targetAddress,
             block.timestamp + 120
             );
 
-        uint256 amountReceived = balanceOf(msg.sender) - initialBalance;
+        uint256 amountReceived = balanceOf(targetAddress) - initialBalance;
+        
+        // in percentage, 100% = 10000; 1% = 100; 0.1% = 10
+        uint256 txPaymentFee = amountReceived / 10000 * paymentFee;
+        uint256 valueAfterFee = amountReceived - txPaymentFee;
 
-        emit TransferOtherTokenAndCall(tokenIn, to, amountReceived, minValue, data);
+        if (paymentFee > 0) {
+            // transfer to merchant
+            transfer(to, valueAfterFee);
+            // transfer to team
+            transfer(teamAddress, txPaymentFee);
+        }
 
-        return transferAndCall(to, amountReceived, data);
+        require(_checkAndCallTransfer(msg.sender, to, valueAfterFee, data), "ERC1363: _checkAndCallTransfer reverts");
+
+        emit TransferOtherTokenAndCall(tokenIn, to, value, valueAfterFee, minValue, data);
+
+        return true;
     }
 
     function _checkAndCallTransfer(address from, address to, uint256 value, bytes memory data) internal nonReentrant returns (bool) {
